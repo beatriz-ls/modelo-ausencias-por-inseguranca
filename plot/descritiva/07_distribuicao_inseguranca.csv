@@ -1,0 +1,43 @@
+variavel,categoria,faixa_ausencia,percentual
+agressao_fisica_colegas,Nenhuma vez,Nenhuma ausência,88.84184621791584
+agressao_fisica_colegas,Nenhuma vez,1 a 4 dias,8.77758279407497
+agressao_fisica_colegas,Nenhuma vez,5 dias ou mais,2.3805709880091883
+agressao_fisica_colegas,1 vez,Nenhuma ausência,71.91205087524128
+agressao_fisica_colegas,1 vez,1 a 4 dias,23.239361274960423
+agressao_fisica_colegas,1 vez,5 dias ou mais,4.84858784979829
+agressao_fisica_colegas,2 vezes,Nenhuma ausência,66.57542912004793
+agressao_fisica_colegas,2 vezes,1 a 4 dias,26.97827902792011
+agressao_fisica_colegas,2 vezes,5 dias ou mais,6.446291852031965
+agressao_fisica_colegas,3 ou mais vezes,Nenhuma ausência,73.7170466636002
+agressao_fisica_colegas,3 ou mais vezes,1 a 4 dias,18.817250799021977
+agressao_fisica_colegas,3 ou mais vezes,5 dias ou mais,7.465702537377826
+bullying_sofrido,Nenhuma vez,Nenhuma ausência,91.07040282510506
+bullying_sofrido,Nenhuma vez,1 a 4 dias,7.067977646331232
+bullying_sofrido,Nenhuma vez,5 dias ou mais,1.8616195285637034
+bullying_sofrido,1 vez,Nenhuma ausência,81.50939975328045
+bullying_sofrido,1 vez,1 a 4 dias,15.773311700827447
+bullying_sofrido,1 vez,5 dias ou mais,2.717288545892099
+bullying_sofrido,2 vezes,Nenhuma ausência,78.81318013786978
+bullying_sofrido,2 vezes,1 a 4 dias,17.804336475694406
+bullying_sofrido,2 vezes,5 dias ou mais,3.3824833864358124
+bullying_sofrido,3 ou mais vezes,Nenhuma ausência,75.22202900755298
+bullying_sofrido,3 ou mais vezes,1 a 4 dias,18.017145083692395
+bullying_sofrido,3 ou mais vezes,5 dias ou mais,6.760825908754625
+cyberbullying_sofrido,Não,Nenhuma ausência,88.69340959453014
+cyberbullying_sofrido,Não,1 a 4 dias,9.132406184746566
+cyberbullying_sofrido,Não,5 dias ou mais,2.174184220723293
+cyberbullying_sofrido,Sim,Nenhuma ausência,66.26379782159013
+cyberbullying_sofrido,Sim,1 a 4 dias,25.009250322707228
+cyberbullying_sofrido,Sim,5 dias ou mais,8.726951855702648
+exclusao_social,Nenhuma vez,Nenhuma ausência,90.70813559122463
+exclusao_social,Nenhuma vez,1 a 4 dias,7.349155271218713
+exclusao_social,Nenhuma vez,5 dias ou mais,1.942709137556662
+exclusao_social,1 vez,Nenhuma ausência,77.42757028559772
+exclusao_social,1 vez,1 a 4 dias,18.93125531441463
+exclusao_social,1 vez,5 dias ou mais,3.641174399987654
+exclusao_social,2 vezes,Nenhuma ausência,70.91521360485697
+exclusao_social,2 vezes,1 a 4 dias,24.60099229084464
+exclusao_social,2 vezes,5 dias ou mais,4.483794104298383
+exclusao_social,3 ou mais vezes,Nenhuma ausência,68.3078942431755
+exclusao_social,3 ou mais vezes,1 a 4 dias,21.949322259897027
+exclusao_social,3 ou mais vezes,5 dias ou mais,9.742783496927471

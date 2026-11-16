@@ -1,6 +1,6 @@
 ################################################################################
 # SCRIPT 2 - ANÁLISE DESCRITIVA | PeNSE 2024
-# Saídas: plot/descritiva
+# Saídas: plot/descritiva_ver2
 ################################################################################
 
 library(tidyverse)
@@ -8,34 +8,329 @@ library(survey)
 library(gtsummary)
 library(gt)
 
+################################################################################
+# 0. PREPARAÇÃO DOS DADOS
+################################################################################
+
 # Leitura da base tratada no Script 1
 dados <- readRDS("data/dados_pense2024_tratados.rds")
 
 # Diretório dos resultados
-diretorio <- "plot/descritiva"
+diretorio <- "plot/descritiva_ver2"
 dir.create(diretorio, recursive = TRUE, showWarnings = FALSE)
 
-# Cor fixa para cada variável (paleta com contraste sobre fundo branco)
-cores_variaveis <- c(
-  dias_ausencia_inseguranca_escola = "#31688E",
-  bullying_sofrido = "#D1495B",
-  exclusao_social = "#7B2CBF",
-  agressao_fisica_colegas = "#E76F51",
-  cyberbullying_sofrido = "#C77D00",
-  apoio_familiar = "#26867A",
-  escolaridade_mae = "#648FFF",
-  acao_prevencao_bullying = "#009E73",
-  sexo = "#CC79A7",
-  raca_cor = "#8C6D31",
-  faixa_etaria = "#2A9D8F",
-  rede_ensino = "#5E6472"
+# Variável resposta
+variavel_resposta <- "dias_ausencia_inseguranca_escola"
+
+# Variáveis explicativas
+variaveis_explicativas <- c(
+  "bullying_sofrido",
+  "exclusao_social",
+  "agressao_fisica_colegas",
+  "cyberbullying_sofrido",
+  "apoio_familiar",
+  "escolaridade_mae",
+  "acao_prevencao_bullying",
+  "sexo",
+  "raca_cor",
+  "faixa_etaria",
+  "rede_ensino"
 )
 
+# Todas as variáveis utilizadas na análise
+variaveis_analise <- c(
+  variavel_resposta,
+  variaveis_explicativas
+)
+
+################################################################################
+# 1. QUALIDADE DOS DADOS
+################################################################################
+
+# 1.1. Completude das variáveis -----------------------------------------------
+
+qualidade_dados <- dados |>
+  select(all_of(variaveis_analise)) |>
+  summarise(
+    across(
+      everything(),
+      list(
+        n_total = ~length(.x),
+        n_validos = ~sum(!is.na(.x)),
+        n_ausentes = ~sum(is.na(.x)),
+        percentual_validos = ~100 * mean(!is.na(.x)),
+        percentual_ausentes = ~100 * mean(is.na(.x))
+      )
+    )
+  ) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = c("variavel", ".value"),
+    names_pattern = paste0(
+      "^(.*)_(n_total|n_validos|n_ausentes|",
+      "percentual_validos|percentual_ausentes)$"
+    )
+  ) |>
+  arrange(desc(percentual_ausentes))
+
+# Visualizar os resultados
+print(qualidade_dados, n = Inf)
+
+# Exportar tabela
+readr::write_csv(
+  qualidade_dados,
+  file.path(diretorio, "01_qualidade_dados.csv")
+)
+
+
+# 1.2. RESUMO DA COMPLETUDE DA AMOSTRA -----------------------------------------
+
+resumo_qualidade <- dados |>
+  summarise(
+    n_total = n(),
+    
+    n_resposta_valida = sum(
+      !is.na(dias_ausencia_inseguranca_escola)
+    ),
+    
+    percentual_resposta_valida =
+      100 * mean(!is.na(dias_ausencia_inseguranca_escola)),
+    
+    n_casos_completos = sum(
+      complete.cases(pick(all_of(variaveis_analise)))
+    ),
+    
+    percentual_casos_completos =
+      100 * mean(
+        complete.cases(pick(all_of(variaveis_analise)))
+      )
+  )
+
+# Visualizar os resultados
+print(resumo_qualidade, width = 200)
+
+# Exportar resumo
+readr::write_csv(
+  resumo_qualidade,
+  file.path(diretorio, "02_resumo_qualidade.csv")
+)
+
+
+################################################################################
+# 2. DISTRIBUIÇÃO DA VARIÁVEL RESPOSTA
+################################################################################
+
+# Cor da variável resposta
+cor_resposta <- "#31688E"
+
+# Preparação dos dados
+dados_resposta <- dados |>
+  filter(
+    !is.na(peso_amostral),
+    is.finite(peso_amostral),
+    peso_amostral > 0,
+    !is.na(estrato),
+    !is.na(id_escola)
+  ) |>
+  mutate(
+    # Recodificação: categorias 1 a 6 correspondem a 0, 1, 2, 3, 4, 5+
+    y = as.integer(dias_ausencia_inseguranca_escola) - 1L,
+    
+    categoria_geral = factor(
+      y,
+      levels = 0:5,
+      labels = c("0 dias", "1 dia", "2 dias", "3 dias",
+                 "4 dias", "5 dias ou mais")
+    ),
+    
+    categoria_positivos = factor(
+      y,
+      levels = 1:5,
+      labels = c("1 dia", "2 dias", "3 dias",
+                 "4 dias", "5 dias ou mais")
+    )
+  )
+
+# Desenho amostral - especificação provisória
+options(survey.lonely.psu = "adjust")
+
+desenho <- survey::svydesign(
+  ids = ~id_escola,
+  strata = ~estrato,
+  weights = ~peso_amostral,
+  data = dados_resposta,
+  nest = TRUE
+)
+
+# Domínios de análise
+desenho_geral <- subset(desenho, !is.na(y))
+desenho_positivos <- subset(desenho, !is.na(y) & y > 0)
+
+################################################################################
+# 2.1. DISTRIBUIÇÃO GERAL - INCLUINDO ZERO
+################################################################################
+
+# Estimativas ponderadas e intervalos de confiança
+estimativa_geral <- survey::svymean(
+  ~categoria_geral,
+  desenho_geral,
+  na.rm = TRUE
+)
+
+ic_geral <- confint(estimativa_geral)
+
+distribuicao_geral <- tibble(
+  categoria = levels(dados_resposta$categoria_geral),
+  percentual = 100 * as.numeric(coef(estimativa_geral)),
+  ic_inferior = pmax(0, 100 * ic_geral[, 1]),
+  ic_superior = pmin(100, 100 * ic_geral[, 2])
+)
+
+# Gráfico
+grafico_geral <- ggplot(
+  distribuicao_geral,
+  aes(x = categoria, y = percentual)
+) +
+  geom_col(
+    fill = cor_resposta,
+    width = 0.7
+  ) +
+  geom_errorbar(
+    aes(ymin = ic_inferior, ymax = ic_superior),
+    width = 0.15,
+    linewidth = 0.5
+  ) +
+  geom_text(
+    aes(
+      y = ic_superior + 1,
+      label = sprintf("%.1f%%", percentual)
+    ),
+    size = 3.7
+  ) +
+  scale_y_continuous(
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.12))
+  ) +
+  labs(
+    title = "Ausência escolar por insegurança",
+    subtitle = "PeNSE 2024 | Percentuais ponderados e IC 95%",
+    x = "Dias de ausência",
+    y = "Estudantes (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+
+ggsave(
+  file.path(diretorio, "03_ausencia_distribuicao_geral.png"),
+  grafico_geral,
+  width = 9,
+  height = 5,
+  dpi = 300
+)
+
+################################################################################
+# 2.2. DISTRIBUIÇÃO CONDICIONAL - SEM ZERO
+################################################################################
+
+# Estimativas ponderadas e intervalos de confiança
+estimativa_positivos <- survey::svymean(
+  ~categoria_positivos,
+  desenho_positivos,
+  na.rm = TRUE
+)
+
+ic_positivos <- confint(estimativa_positivos)
+
+distribuicao_positivos <- tibble(
+  categoria = levels(dados_resposta$categoria_positivos),
+  percentual = 100 * as.numeric(coef(estimativa_positivos)),
+  ic_inferior = pmax(0, 100 * ic_positivos[, 1]),
+  ic_superior = pmin(100, 100 * ic_positivos[, 2])
+)
+
+# Gráfico
+grafico_positivos <- ggplot(
+  distribuicao_positivos,
+  aes(x = categoria, y = percentual)
+) +
+  geom_col(
+    fill = cor_resposta,
+    width = 0.7
+  ) +
+  geom_errorbar(
+    aes(ymin = ic_inferior, ymax = ic_superior),
+    width = 0.15,
+    linewidth = 0.5
+  ) +
+  geom_text(
+    aes(
+      y = ic_superior + 1,
+      label = sprintf("%.1f%%", percentual)
+    ),
+    size = 3.7
+  ) +
+  scale_y_continuous(
+    limits = c(0, NA),
+    expand = expansion(mult = c(0, 0.12))
+  ) +
+  labs(
+    title = "Ausências entre estudantes que faltaram",
+    subtitle = "PeNSE 2024 | Percentuais ponderados e IC 95%",
+    x = "Dias de ausência",
+    y = "Estudantes com alguma ausência (%)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank()
+  )
+
+ggsave(
+  file.path(diretorio, "04_ausencia_distribuicao_positivos.png"),
+  grafico_positivos,
+  width = 9,
+  height = 5,
+  dpi = 300
+)
+
+################################################################################
+# 2.3. EXPORTAÇÃO DAS ESTIMATIVAS
+################################################################################
+
+readr::write_csv(
+  distribuicao_geral,
+  file.path(diretorio, "03_distribuicao_geral.csv")
+)
+
+readr::write_csv(
+  distribuicao_positivos,
+  file.path(diretorio, "04_distribuicao_positivos.csv")
+)
+
+# Visualizar gráficos
+print(grafico_geral)
+print(grafico_positivos)
+
+
+################################################################################
+# 3. PERFIL DOS ESTUDANTES E ASSOCIAÇÕES BIVARIADAS
+################################################################################
+
+################################################################################
+# 3.0. PREPARAÇÃO DOS DADOS
+################################################################################
+
+# Rótulos das variáveis
 rotulos_variaveis <- c(
-  bullying_sofrido = "Bullying sofrido",
+  bullying_sofrido = "Bullying",
   exclusao_social = "Exclusão social",
   agressao_fisica_colegas = "Agressão física por colegas",
-  cyberbullying_sofrido = "Cyberbullying sofrido",
+  cyberbullying_sofrido = "Cyberbullying",
   apoio_familiar = "Apoio familiar",
   escolaridade_mae = "Escolaridade materna",
   acao_prevencao_bullying = "Ações escolares de prevenção ao bullying",
@@ -45,304 +340,82 @@ rotulos_variaveis <- c(
   rede_ensino = "Rede de ensino"
 )
 
-variaveis_explicativas <- names(rotulos_variaveis)
-
-# Tema único para todos os gráficos
-tema_descritiva <- theme_minimal(base_size = 12) +
-  theme(
-    plot.title = element_text(face = "bold", size = 13),
-    plot.subtitle = element_text(color = "grey40"),
-    panel.grid.minor = element_blank(),
-    panel.grid.major.x = element_blank(),
-    axis.text.x = element_text(color = "grey25"),
-    axis.text.y = element_text(color = "grey25")
+# Organização temática das variáveis
+grupos_variaveis <- list(
+  sociodemograficas = c(
+    "sexo",
+    "raca_cor",
+    "faixa_etaria",
+    "escolaridade_mae",
+    "rede_ensino"
+  ),
+  
+  inseguranca = c(
+    "bullying_sofrido",
+    "exclusao_social",
+    "agressao_fisica_colegas",
+    "cyberbullying_sofrido"
+  ),
+  
+  protecao = c(
+    "apoio_familiar",
+    "acao_prevencao_bullying"
   )
+)
 
-# Conferência da elegibilidade para estimativas ponderadas
-resumo_elegibilidade <- dados |>
-  summarise(
-    n_total = n(),
-    n_com_resposta = sum(!is.na(ausencia_limite_inferior)),
-    n_com_peso_positivo = sum(!is.na(peso_amostral) & peso_amostral > 0),
-    n_com_resposta_e_peso = sum(
-      !is.na(ausencia_limite_inferior) &
-        !is.na(peso_amostral) & peso_amostral > 0
-    )
-  )
-readr::write_csv(resumo_elegibilidade, file.path(diretorio, "01_elegibilidade.csv"))
+# Verificar as variáveis necessárias
+stopifnot(
+  exists("desenho_geral"),
+  all(variaveis_explicativas %in% names(desenho_geral$variables)),
+  "y" %in% names(desenho_geral$variables)
+)
 
-# Não imputar pesos ausentes; restringir estimativas ponderadas ao domínio elegível.
-dados_ponderados <- dados |>
-  filter(
-    !is.na(peso_amostral),
-    is.finite(peso_amostral),
-    peso_amostral > 0,
-    !is.na(estrato),
-    !is.na(id_escola)
-  ) |>
+# Utilizar o desenho da Parte 2, com resposta válida
+desenho_analise <- desenho_geral
+
+# Preparar fatores e categorias da resposta
+desenho_analise$variables <- desenho_analise$variables |>
   mutate(
+    across(
+      all_of(variaveis_explicativas),
+      as.factor
+    ),
+    
     ausencia_binaria = factor(
-      ausencia_alguma,
+      y > 0,
       levels = c(FALSE, TRUE),
       labels = c("Nenhuma ausência", "Alguma ausência")
     ),
-    # Fatores ordinais como categorias (sem tendência linear imposta)
-    across(all_of(variaveis_explicativas), as.factor)
-  )
-
-# ATENÇÃO: especificação provisória do desenho, a confirmar na documentação
-# IBGE PeNSE 2024 (PSU, estratos, peso final e possíveis ajustes de variância).
-# A opção de PSU solitária deve ser definida de forma fundamentada.
-options(survey.lonely.psu = "adjust")
-desenho <- survey::svydesign(
-  ids = ~id_escola,
-  strata = ~estrato,
-  weights = ~peso_amostral,
-  data = dados_ponderados,
-  nest = TRUE
-)
-
-################################################################################
-# ANÁLISE DESCRITIVA DA RESPOSTA
-################################################################################
-
-# Mesma subamostra na coluna amostral e na coluna ponderada
-dados_resposta <- dados_ponderados |>
-  filter(!is.na(dias_ausencia_inseguranca_escola)) |>
-  mutate(
-    y = as.integer(dias_ausencia_inseguranca_escola) - 1L
-  )
-
-distribuicao <- dados_resposta |>
-  group_by(dias_ausencia_inseguranca_escola, y) |>
-  summarise(
-    n_amostral = n(),
-    total_ponderado = sum(peso_amostral),
-    .groups = "drop"
-  ) |>
-  arrange(y) |>
-  mutate(
-    percentual_amostral = 100 * n_amostral / sum(n_amostral),
-    percentual_ponderado = 100 * total_ponderado / sum(total_ponderado),
-    percentual_acumulado_ponderado = cumsum(percentual_ponderado)
-  )
-
-readr::write_csv(distribuicao, file.path(diretorio, "02_distribuicao_resposta.csv"))
-
-resumo_contagens <- dados_resposta |>
-  summarise(
-    n_validos = n(),
-    n_zeros = sum(y == 0),
-    n_positivos = sum(y > 0),
-    n_censurados = sum(y == 5),
-    percentual_zeros_ponderado = 100 * weighted.mean(y == 0, peso_amostral),
-    percentual_positivos_ponderado = 100 * weighted.mean(y > 0, peso_amostral),
-    percentual_censurados_ponderado = 100 * weighted.mean(y == 5, peso_amostral),
-    percentual_censurados_entre_positivos_ponderado =
-      100 * sum(peso_amostral[y == 5]) / sum(peso_amostral[y > 0])
-  )
-readr::write_csv(resumo_contagens, file.path(diretorio, "03_resumo_contagens.csv"))
-
-distribuicao_positivos <- dados_resposta |>
-  filter(y > 0) |>
-  group_by(dias_ausencia_inseguranca_escola, y) |>
-  summarise(
-    n_amostral = n(),
-    total_ponderado = sum(peso_amostral),
-    .groups = "drop"
-  ) |>
-  arrange(y) |>
-  mutate(percentual_ponderado = 100 * total_ponderado / sum(total_ponderado))
-readr::write_csv(distribuicao_positivos, file.path(diretorio, "04_distribuicao_positivos.csv"))
-
-grafico_geral <- ggplot(
-  distribuicao,
-  aes(x = dias_ausencia_inseguranca_escola, y = percentual_ponderado)
-) +
-  geom_col(fill = cores_variaveis[["dias_ausencia_inseguranca_escola"]], width = 0.72) +
-  geom_text(aes(label = sprintf("%.1f%%", percentual_ponderado)),
-            vjust = -0.4, size = 3.4) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
-  labs(title = "Ausência escolar por insegurança",
-       subtitle = "PeNSE 2024 · proporções ponderadas",
-       x = "Dias de ausência", y = "Percentual (%)") +
-  tema_descritiva +
-  theme(axis.text.x = element_text(angle = 25, hjust = 1))
-
-ggsave(file.path(diretorio, "01_ausencia_distribuicao.png"),
-       grafico_geral, width = 9, height = 5, dpi = 300)
-
-grafico_positivos <- ggplot(
-  distribuicao_positivos,
-  aes(x = dias_ausencia_inseguranca_escola, y = percentual_ponderado)
-) +
-  geom_col(fill = cores_variaveis[["dias_ausencia_inseguranca_escola"]], width = 0.72) +
-  geom_text(aes(label = sprintf("%.1f%%", percentual_ponderado)),
-            vjust = -0.4, size = 3.4) +
-  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
-  labs(title = "Ausências entre estudantes que faltaram",
-       subtitle = "PeNSE 2024 · distribuição ponderada condicional a alguma ausência",
-       x = "Dias de ausência", y = "Percentual (%)") +
-  tema_descritiva +
-  theme(axis.text.x = element_text(angle = 25, hjust = 1))
-
-ggsave(file.path(diretorio, "02_ausencia_entre_positivos.png"),
-       grafico_positivos, width = 9, height = 5, dpi = 300)
-
-grafico_acumulado <- ggplot(
-  distribuicao,
-  aes(x = dias_ausencia_inseguranca_escola,
-      y = percentual_acumulado_ponderado, group = 1)
-) +
-  geom_line(color = cores_variaveis[["dias_ausencia_inseguranca_escola"]], linewidth = 1) +
-  geom_point(color = cores_variaveis[["dias_ausencia_inseguranca_escola"]], size = 2.6) +
-  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
-  labs(title = "Distribuição acumulada das ausências",
-       subtitle = "PeNSE 2024 · proporções ponderadas · 5+ é categoria aberta",
-       x = "Dias de ausência", y = "Percentual acumulado (%)") +
-  tema_descritiva +
-  theme(axis.text.x = element_text(angle = 25, hjust = 1))
-
-ggsave(file.path(diretorio, "03_ausencia_acumulada.png"),
-       grafico_acumulado, width = 9, height = 5, dpi = 300)
-
-################################################################################
-# COVARIÁVEIS - DISTRIBUIÇÕES E GRÁFICOS
-################################################################################
-
-# Formato longo: conserva rótulos e usa os pesos para frequências populacionais
-dados_longos <- dados_ponderados |>
-  select(peso_amostral, all_of(variaveis_explicativas)) |>
-  mutate(across(all_of(variaveis_explicativas), as.character)) |>
-  pivot_longer(
-    cols = all_of(variaveis_explicativas),
-    names_to = "variavel",
-    values_to = "categoria"
-  ) |>
-  filter(!is.na(categoria))
-
-distribuicao_covariaveis <- dados_longos |>
-  group_by(variavel, categoria) |>
-  summarise(
-    n_amostral = n(),
-    total_ponderado = sum(peso_amostral),
-    .groups = "drop"
-  ) |>
-  group_by(variavel) |>
-  mutate(
-    percentual_amostral = 100 * n_amostral / sum(n_amostral),
-    percentual_ponderado = 100 * total_ponderado / sum(total_ponderado)
-  ) |>
-  ungroup()
-
-readr::write_csv(distribuicao_covariaveis,
-                 file.path(diretorio, "05_distribuicao_covariaveis.csv"))
-
-# Associação descritiva: proporção de alguma ausência em cada categoria
-associacoes <- dados_ponderados |>
-  filter(!is.na(ausencia_alguma)) |>
-  select(peso_amostral, ausencia_alguma, ausencia_censurada,
-         all_of(variaveis_explicativas)) |>
-  mutate(across(all_of(variaveis_explicativas), as.character)) |>
-  pivot_longer(
-    cols = all_of(variaveis_explicativas),
-    names_to = "variavel",
-    values_to = "categoria"
-  ) |>
-  filter(!is.na(categoria)) |>
-  group_by(variavel, categoria) |>
-  summarise(
-    n_amostral = n(),
-    n_ausencias = sum(ausencia_alguma),
-    percentual_alguma_ausencia = 100 * weighted.mean(ausencia_alguma, peso_amostral),
-    percentual_cinco_mais = 100 * weighted.mean(ausencia_censurada, peso_amostral),
-    percentual_cinco_mais_entre_positivos =
-      if_else(sum(peso_amostral[ausencia_alguma]) > 0,
-              100 * sum(peso_amostral[ausencia_censurada]) /
-                sum(peso_amostral[ausencia_alguma]), NA_real_),
-    .groups = "drop"
-  )
-
-readr::write_csv(associacoes, file.path(diretorio, "06_ausencia_por_covariavel.csv"))
-
-# Gera um gráfico por variável, preservando sua cor em todos os gráficos.
-# A ordem das categorias segue a ordem dos fatores definida no Script 1.
-purrr::walk(variaveis_explicativas, function(nome) {
-  niveis <- levels(as.factor(dados_ponderados[[nome]]))
-
-  tabela_dist <- distribuicao_covariaveis |>
-    filter(variavel == nome) |>
-    mutate(categoria = factor(categoria, levels = niveis))
-
-  grafico_dist <- ggplot(tabela_dist,
-                         aes(x = categoria, y = percentual_ponderado)) +
-    geom_col(fill = cores_variaveis[[nome]], width = 0.72) +
-    scale_y_continuous(expand = expansion(mult = c(0, 0.09))) +
-    labs(title = rotulos_variaveis[[nome]],
-         subtitle = "PeNSE 2024 · distribuição ponderada",
-         x = NULL, y = "Percentual (%)") +
-    tema_descritiva +
-    coord_flip()
-
-  ggsave(file.path(diretorio, paste0("distribuicao_", nome, ".png")),
-         grafico_dist, width = 9, height = 5.5, dpi = 300)
-
-  tabela_assoc <- associacoes |>
-    filter(variavel == nome) |>
-    mutate(categoria = factor(categoria, levels = niveis))
-
-  grafico_assoc <- ggplot(tabela_assoc,
-                          aes(x = categoria, y = percentual_alguma_ausencia)) +
-    geom_col(fill = cores_variaveis[[nome]], width = 0.72) +
-    scale_y_continuous(expand = expansion(mult = c(0, 0.09))) +
-    labs(title = paste("Alguma ausência segundo", tolower(rotulos_variaveis[[nome]])),
-         subtitle = "PeNSE 2024 · prevalências ponderadas, não ajustadas",
-         x = NULL, y = "Estudantes com alguma ausência (%)") +
-    tema_descritiva +
-    coord_flip()
-
-  ggsave(file.path(diretorio, paste0("ausencia_por_", nome, ".png")),
-         grafico_assoc, width = 9, height = 5.5, dpi = 300)
-})
-
-################################################################################
-# TABELAS FORMATADAS E TESTES EXPLORATÓRIOS
-################################################################################
-
-# Tabela descritiva ponderada das covariáveis (sem separar pela resposta)
-tabela_perfil <- desenho |>
-  gtsummary::tbl_svysummary(
-    include = all_of(variaveis_explicativas),
-    statistic = all_categorical() ~ "{p}%",
-    digits = all_categorical() ~ 1,
-    missing = "ifany",
-    label = list(
-      bullying_sofrido ~ "Bullying sofrido",
-      exclusao_social ~ "Exclusão social",
-      agressao_fisica_colegas ~ "Agressão física por colegas",
-      cyberbullying_sofrido ~ "Cyberbullying sofrido",
-      apoio_familiar ~ "Apoio familiar",
-      escolaridade_mae ~ "Escolaridade materna",
-      acao_prevencao_bullying ~ "Ações escolares de prevenção ao bullying",
-      sexo ~ "Sexo",
-      raca_cor ~ "Raça/cor",
-      faixa_etaria ~ "Faixa etária",
-      rede_ensino ~ "Rede de ensino"
+    
+    alguma_ausencia = as.numeric(y > 0),
+    
+    faixa_ausencia = factor(
+      case_when(
+        y == 0 ~ "Nenhuma ausência",
+        y >= 1 & y <= 4 ~ "1 a 4 dias",
+        y == 5 ~ "5 dias ou mais"
+      ),
+      levels = c(
+        "Nenhuma ausência",
+        "1 a 4 dias",
+        "5 dias ou mais"
+      )
     )
-  ) |>
-  gtsummary::modify_caption("**PeNSE 2024 — Perfil dos estudantes (percentuais ponderados)**")
+  )
 
-# Para associação, usar somente estudantes com resposta conhecida;
-# survey::subset preserva a estrutura de desenho para os domínios analisados.
-desenho_com_resposta <- subset(desenho, !is.na(ausencia_binaria))
+################################################################################
+# 3.1. TABELA DE CARACTERÍSTICAS SEGUNDO AUSÊNCIA ESCOLAR
+################################################################################
 
-tabela_associacoes <- desenho_com_resposta |>
+tabela_caracteristicas <- desenho_analise |>
   gtsummary::tbl_svysummary(
     by = ausencia_binaria,
     include = all_of(variaveis_explicativas),
+    
     statistic = all_categorical() ~ "{p}%",
     digits = all_categorical() ~ 1,
     missing = "ifany",
+    
     label = list(
       bullying_sofrido ~ "Bullying sofrido",
       exclusao_social ~ "Exclusão social",
@@ -350,41 +423,486 @@ tabela_associacoes <- desenho_com_resposta |>
       cyberbullying_sofrido ~ "Cyberbullying sofrido",
       apoio_familiar ~ "Apoio familiar",
       escolaridade_mae ~ "Escolaridade materna",
-      acao_prevencao_bullying ~ "Ações escolares de prevenção ao bullying",
+      acao_prevencao_bullying ~
+        "Ações escolares de prevenção ao bullying",
       sexo ~ "Sexo",
       raca_cor ~ "Raça/cor",
       faixa_etaria ~ "Faixa etária",
       rede_ensino ~ "Rede de ensino"
     )
   ) |>
-  gtsummary::add_p(test = all_categorical() ~ "svy.chisq.test") |>
+  gtsummary::add_overall(
+    last = FALSE,
+    col_label = "**Total**"
+  ) |>
+  gtsummary::add_p(
+    test = all_categorical() ~ "svy.chisq.test"
+  ) |>
+  gtsummary::bold_labels() |>
   gtsummary::modify_caption(
-    "**PeNSE 2024 — Características segundo ausência por insegurança (percentuais ponderados)**"
+    "**PeNSE 2024 — Características dos estudantes segundo a ocorrência de ausência escolar**"
   )
 
-# HTML para apresentação e CSV para conferência dos resultados
-gt::gtsave(gtsummary::as_gt(tabela_perfil),
-           file.path(diretorio, "07_tabela_perfil.html"))
-gt::gtsave(gtsummary::as_gt(tabela_associacoes),
-           file.path(diretorio, "08_tabela_associacoes_testes.html"))
+# Visualizar tabela
+tabela_caracteristicas
 
-readr::write_csv(gtsummary::as_tibble(tabela_perfil, col_labels = FALSE),
-                 file.path(diretorio, "07_tabela_perfil.csv"))
-readr::write_csv(gtsummary::as_tibble(tabela_associacoes, col_labels = FALSE),
-                 file.path(diretorio, "08_tabela_associacoes_testes.csv"))
-
-# Conservar objetos dos resultados para análises posteriores
-saveRDS(
-  list(
-    distribuicao_resposta = distribuicao,
-    resumo_contagens = resumo_contagens,
-    distribuicao_positivos = distribuicao_positivos,
-    distribuicao_covariaveis = distribuicao_covariaveis,
-    associacoes = associacoes,
-    tabela_perfil = tabela_perfil,
-    tabela_associacoes = tabela_associacoes
-  ),
-  file.path(diretorio, "resultados_descritiva.rds")
+# Exportar HTML
+gt::gtsave(
+  gtsummary::as_gt(tabela_caracteristicas),
+  file.path(diretorio, "05_tabela_caracteristicas.html")
 )
 
-cat("Resultados exportados para:", diretorio, "\n")
+# Exportar CSV
+readr::write_csv(
+  gtsummary::as_tibble(
+    tabela_caracteristicas,
+    col_labels = FALSE
+  ),
+  file.path(diretorio, "05_tabela_caracteristicas.csv")
+)
+
+################################################################################
+# 3.2. PREVALÊNCIA DE AUSÊNCIA POR COVARIÁVEL - FOREST PLOTS
+################################################################################
+
+# Estimar prevalências e IC 95% por categoria
+
+calcula_prevalencias <- function(nome) {
+  
+  estimativas <- survey::svyby(
+    formula = ~alguma_ausencia,
+    by = stats::reformulate(nome),
+    design = desenho_analise,
+    FUN = survey::svymean,
+    na.rm = TRUE,
+    na.rm.by = TRUE,
+    vartype = c("se", "ci"),
+    drop.empty.groups = TRUE,
+    keep.names = FALSE
+  )
+  
+  intervalos <- confint(estimativas)
+  
+  tibble(
+    variavel = nome,
+    categoria = as.character(estimativas[[nome]]),
+    percentual = 100 * as.numeric(coef(estimativas)),
+    ic_inferior = pmax(0, 100 * intervalos[, 1]),
+    ic_superior = pmin(100, 100 * intervalos[, 2])
+  )
+}
+
+
+# Calcular estimativas para todas as covariáveis
+prevalencias <- purrr::map_dfr(
+  variaveis_explicativas,
+  calcula_prevalencias
+) |>
+  mutate(
+    variavel_rotulo = unname(rotulos_variaveis[variavel]),
+    
+    grupo = case_when(
+      variavel %in% grupos_variaveis$sociodemograficas ~
+        "sociodemograficas",
+      
+      variavel %in% grupos_variaveis$inseguranca ~
+        "inseguranca",
+      
+      variavel %in% grupos_variaveis$protecao ~
+        "protecao"
+    ),
+    
+    # Identificador único para ordenar categorias nos painéis
+    categoria_plot = paste(variavel, categoria, sep = "___"),
+    
+    categoria_plot = forcats::fct_reorder(
+      categoria_plot,
+      percentual
+    )
+  )
+
+# Exportar estimativas
+readr::write_csv(
+  prevalencias |>
+    select(
+      variavel,
+      categoria,
+      grupo,
+      percentual,
+      ic_inferior,
+      ic_superior
+    ),
+  file.path(diretorio, "06_prevalencias_ic95.csv")
+)
+
+
+################################################################################
+# 3.2.1. FUNÇÃO PARA CONSTRUIR OS FOREST PLOTS
+################################################################################
+
+grafico_forest <- function(grupo_selecionado, titulo, arquivo) {
+  
+  dados_grafico <- prevalencias |>
+    filter(grupo == grupo_selecionado) |>
+    mutate(
+      variavel_rotulo = factor(
+        variavel_rotulo,
+        levels = unname(
+          rotulos_variaveis[
+            grupos_variaveis[[grupo_selecionado]]
+          ]
+        )
+      )
+    )
+  
+  # Limite dinâmico do eixo X, com espaço para os rótulos
+  limite_x <- min(
+    100,
+    ceiling(
+      (max(dados_grafico$ic_superior, na.rm = TRUE) + 5) / 5
+    ) * 5
+  )
+  
+  grafico <- ggplot(
+    dados_grafico,
+    aes(
+      x = percentual,
+      y = categoria_plot
+    )
+  ) +
+    geom_segment(
+      aes(
+        x = ic_inferior,
+        xend = ic_superior,
+        yend = categoria_plot
+      ),
+      color = "#31688E",
+      linewidth = 0.9
+    ) +
+    geom_point(
+      color = "#31688E",
+      size = 3
+    ) +
+    geom_text(
+      aes(
+        x = ic_superior + 0.8,
+        label = sprintf("%.1f%%", percentual)
+      ),
+      hjust = 0,
+      size = 3.2,
+      color = "#333333"
+    ) +
+    facet_wrap(
+      ~variavel_rotulo,
+      ncol = 1,
+      scales = "free_y"
+    ) +
+    scale_y_discrete(
+      labels = function(x) {
+        stringr::str_remove(x, "^.*___")
+      }
+    ) +
+    scale_x_continuous(
+      breaks = seq(0, 100, by = 5),
+      labels = function(x) paste0(x, "%"),
+      expand = expansion(mult = c(0.01, 0))
+    ) +
+    coord_cartesian(
+      xlim = c(0, limite_x)
+    ) +
+    labs(
+      title = titulo,
+      subtitle = "PeNSE 2024 | Prevalências ponderadas e IC 95%",
+      x = "Estudantes com alguma ausência (%)",
+      y = NULL
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(
+      plot.title = element_text(
+        face = "bold",
+        size = 13
+      ),
+      plot.subtitle = element_text(
+        color = "grey40"
+      ),
+      strip.text = element_text(
+        face = "bold",
+        hjust = 0
+      ),
+      strip.background = element_rect(
+        fill = "grey95",
+        color = NA
+      ),
+      panel.grid.minor = element_blank(),
+      panel.grid.major.y = element_blank(),
+      panel.grid.major.x = element_line(
+        color = "grey88",
+        linewidth = 0.3
+      )
+    )
+  
+  ggsave(
+    file.path(diretorio, arquivo),
+    grafico,
+    width = 10,
+    height = max(
+      5,
+      1.8 * length(grupos_variaveis[[grupo_selecionado]]) + 1.5
+    ),
+    dpi = 300
+  )
+  
+  return(grafico)
+}
+
+
+################################################################################
+# 3.2.2. FOREST PLOT - CARACTERÍSTICAS SOCIODEMOGRÁFICAS
+################################################################################
+
+forest_sociodemograficas <- grafico_forest(
+  grupo_selecionado = "sociodemograficas",
+  titulo = "Ausência escolar segundo características sociodemográficas",
+  arquivo = "06_forest_sociodemograficas.png"
+)
+
+################################################################################
+# 3.2.3. FOREST PLOT - EXPERIÊNCIAS DE INSEGURANÇA
+################################################################################
+
+forest_inseguranca <- grafico_forest(
+  grupo_selecionado = "inseguranca",
+  titulo = "Ausência escolar segundo experiências de violência",
+  arquivo = "07_forest_inseguranca.png"
+)
+
+################################################################################
+# 3.2.4. FOREST PLOT - FATORES DE PROTEÇÃO
+################################################################################
+
+forest_protecao <- grafico_forest(
+  grupo_selecionado = "protecao",
+  titulo = "Ausência escolar segundo fatores de proteção",
+  arquivo = "08_forest_protecao.png"
+)
+
+# Visualizar os três gráficos
+print(forest_sociodemograficas)
+print(forest_inseguranca)
+print(forest_protecao)
+
+################################################################################
+# 3.3. DISTRIBUIÇÃO DOS DIAS DE AUSÊNCIA - BARRAS EMPILHADAS
+################################################################################
+
+# Selecionar as quatro variáveis de violência e insegurança
+variaveis_inseguranca <- grupos_variaveis$inseguranca
+
+# Calcular distribuições ponderadas dentro de cada categoria
+calcula_distribuicao <- function(nome) {
+  
+  # Tabela ponderada pelo desenho amostral
+  tabela <- survey::svytable(
+    stats::reformulate(c(nome, "faixa_ausencia")),
+    design = desenho_analise
+  )
+  
+  # Percentuais condicionais à categoria da covariável
+  distribuicao <- prop.table(tabela, margin = 1)
+  
+  as.data.frame(distribuicao) |>
+    as_tibble() |>
+    transmute(
+      variavel = nome,
+      categoria = as.character(.data[[nome]]),
+      faixa_ausencia = as.character(faixa_ausencia),
+      percentual = 100 * Freq
+    ) |>
+    filter(is.finite(percentual))
+}
+
+# Calcular para as quatro variáveis
+# Selecionar as quatro variáveis de violência e insegurança
+variaveis_inseguranca <- grupos_variaveis$inseguranca
+
+# Calcular distribuições ponderadas dentro de cada categoria
+calcula_distribuicao <- function(nome) {
+  
+  tabela <- survey::svytable(
+    stats::reformulate(c(nome, "faixa_ausencia")),
+    design = desenho_analise
+  )
+  
+  distribuicao <- prop.table(tabela, margin = 1)
+  
+  as.data.frame(distribuicao) |>
+    as_tibble() |>
+    transmute(
+      variavel = nome,
+      categoria = as.character(.data[[nome]]),
+      faixa_ausencia = as.character(faixa_ausencia),
+      percentual = 100 * Freq
+    ) |>
+    filter(is.finite(percentual))
+}
+
+distribuicao_inseguranca <- purrr::map_dfr(
+  variaveis_inseguranca,
+  calcula_distribuicao
+) |>
+  mutate(
+    variavel_rotulo = unname(rotulos_variaveis[variavel]),
+    
+    faixa_ausencia = factor(
+      faixa_ausencia,
+      levels = c(
+        "Nenhuma ausência",
+        "1 a 4 dias",
+        "5 dias ou mais"
+      )
+    )
+  )
+
+# Definir ordem desejada das categorias
+ordem_categorias <- c(
+  "Não",
+  "Sim",
+  "Nenhuma vez",
+  "1 vez",
+  "2 vezes",
+  "3 ou mais vezes"
+)
+
+distribuicao_inseguranca <- distribuicao_inseguranca |>
+  mutate(
+    categoria = factor(categoria, levels = ordem_categorias)
+  ) |>
+  arrange(variavel_rotulo, categoria) |>
+  mutate(
+    categoria_plot = paste(variavel_rotulo, categoria, sep = "___")
+  )
+
+# Preservar a ordem dentro de cada painel
+distribuicao_inseguranca <- distribuicao_inseguranca |>
+  mutate(
+    categoria_plot = factor(
+      categoria_plot,
+      levels = rev(unique(categoria_plot))
+    )
+  )
+
+# Exportar tabela
+readr::write_csv(
+  distribuicao_inseguranca |>
+    select(
+      variavel,
+      categoria,
+      faixa_ausencia,
+      percentual
+    ),
+  file.path(diretorio, "07_distribuicao_inseguranca.csv")
+)
+
+
+
+################################################################################
+# 3.3.1. GRÁFICO DE BARRAS EMPILHADAS
+################################################################################
+
+cores_ausencia <- c(
+  "Nenhuma ausência" = "#31688E",
+  "1 a 4 dias" = "#35A79B",
+  "5 dias ou mais" = "#D18A35"
+)
+
+grafico_barras_empilhadas <- ggplot(
+  distribuicao_inseguranca,
+  aes(
+    x = percentual,
+    y = categoria_plot,
+    fill = faixa_ausencia
+  )
+) +
+  geom_col(
+    width = 0.7
+  ) +
+  geom_text(
+    aes(
+      label = if_else(
+        percentual >= 5,
+        sprintf("%.1f%%", percentual),
+        ""
+      )
+    ),
+    position = position_stack(vjust = 0.5),
+    color = "white",
+    size = 3.2
+  ) +
+  facet_grid(
+    variavel_rotulo ~ .,
+    scales = "free_y",
+    space = "free_y"
+  ) +
+  scale_y_discrete(
+    labels = function(x) {
+      stringr::str_remove(x, "^.*___")
+    }
+  ) +
+  scale_fill_manual(
+    values = cores_ausencia,
+    drop = FALSE
+  ) +
+  scale_x_continuous(
+    breaks = seq(0, 100, 25),
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0, 0))
+  ) +
+  labs(
+    title = "Distribuição dos dias de ausência segundo experiências de violência",
+    subtitle = "PeNSE 2024 | Percentuais ponderados por categoria",
+    x = "Estudantes (%)",
+    y = NULL,
+    fill = "Dias de ausência"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 13),
+    plot.subtitle = element_text(color = "grey40"),
+    strip.text.y = element_text(face = "bold"),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank()
+  )
+
+ggsave(
+  file.path(diretorio, "09_ausencia_barras_empilhadas.png"),
+  grafico_barras_empilhadas,
+  width = 10,
+  height = 8,
+  dpi = 300
+)
+
+print(grafico_barras_empilhadas)
+
+################################################################################
+# 3.4. SALVAR OBJETOS DOS RESULTADOS
+################################################################################
+
+saveRDS(
+  list(
+    tabela_caracteristicas = tabela_caracteristicas,
+    prevalencias = prevalencias,
+    distribuicao_inseguranca = distribuicao_inseguranca,
+    forest_sociodemograficas = forest_sociodemograficas,
+    forest_inseguranca = forest_inseguranca,
+    forest_protecao = forest_protecao,
+    grafico_barras_empilhadas = grafico_barras_empilhadas
+  ),
+  file.path(diretorio, "resultados_perfil_associacoes.rds")
+)
+
+cat(
+  "Análises de perfil e associações concluídas.\n",
+  "Resultados exportados para:", diretorio, "\n"
+)
+
